@@ -1,0 +1,427 @@
+warning: in the working copy of 'ocn-compute/Cargo.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'ocn-compute/src/deduplication.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'ocn-compute/src/server.rs', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/ocn-compute/Cargo.toml b/ocn-compute/Cargo.toml[m
+[1mindex 23368eb..a753db8 100644[m
+[1m--- a/ocn-compute/Cargo.toml[m
+[1m+++ b/ocn-compute/Cargo.toml[m
+[36m@@ -11,3 +11,6 @@[m [mtokio = { version = "1.0", features = ["full"] }[m
+ sha2 = "0.10"[m
+ anyhow = "1.0"[m
+ ocn-core = { path = "../ocn-core" }[m
+[32m+[m
+[32m+[m[32m[dev-dependencies][m
+[32m+[m[32mquinn = "0.11"[m
+[1mdiff --git a/ocn-compute/src/deduplication.rs b/ocn-compute/src/deduplication.rs[m
+[1mindex 376d516..e9e93a2 100644[m
+[1m--- a/ocn-compute/src/deduplication.rs[m
+[1m+++ b/ocn-compute/src/deduplication.rs[m
+[36m@@ -1,7 +1,7 @@[m
+ use crate::task::{TaskDescriptor, ExecutionResult, TaskStatus};[m
+ use std::collections::HashMap;[m
+ use std::sync::Arc;[m
+[31m-use tokio::sync::Mutex;[m
+[32m+[m[32muse tokio::sync::{broadcast, Mutex};[m
+ use std::time::{Duration, Instant};[m
+ [m
+ #[derive(Clone, Debug)][m
+[36m@@ -13,19 +13,41 @@[m [mpub enum TaskExecutionState {[m
+ [m
+ pub struct TaskDeduplicationCache {[m
+     cache: Arc<Mutex<HashMap<String, TaskExecutionState>>>,[m
+[32m+[m[32m    completions: broadcast::Sender<String>,[m
+     ttl: Duration,[m
+     max_capacity: usize,[m
+ }[m
+ [m
+ impl TaskDeduplicationCache {[m
+     pub fn new(ttl: Duration, max_capacity: usize) -> Self {[m
+[32m+[m[32m        // Buffer only needs to hold a burst of completions; a lagging waiter treats[m
+[32m+[m[32m        // `Lagged` as "re-read the cache", so no completion is ever lost logically.[m
+[32m+[m[32m        let (completions, _) = broadcast::channel(64);[m
+         Self {[m
+             cache: Arc::new(Mutex::new(HashMap::new())),[m
+[32m+[m[32m            completions,[m
+             ttl,[m
+             max_capacity,[m
+         }[m
+     }[m
+ [m
+[32m+[m[32m    /// Subscribe to completion notifications before checking the cache.[m
+[32m+[m[32m    ///[m
+[32m+[m[32m    /// Callers must subscribe *before* [`Self::check_or_register`]. A completion that[m
+[32m+[m[32m    /// happens after the subscription is always delivered, and a completion that happens[m
+[32m+[m[32m    /// before it is observed as a terminal state by `check_or_register`, so a concurrent[m
+[32m+[m[32m    /// duplicate can never miss the result of the task it is waiting for.[m
+[32m+[m[32m    pub fn subscribe_completions(&self) -> broadcast::Receiver<String> {[m
+[32m+[m[32m        self.completions.subscribe()[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    /// Read the current state of a task without registering anything.[m
+[32m+[m[32m    pub async fn lookup(&self, idempotency_key: &str) -> Option<TaskExecutionState> {[m
+[32m+[m[32m        let mut cache = self.cache.lock().await;[m
+[32m+[m[32m        self.purge_expired_locked(&mut cache);[m
+[32m+[m[32m        cache.get(idempotency_key).cloned()[m
+[32m+[m[32m    }[m
+[32m+[m
+     /// Try to register a task as running. [m
+     /// Returns Ok(true) if newly registered, Ok(false) if already running/completed, [m
+     /// or returns the cached result if already completed.[m
+[36m@@ -70,26 +92,33 @@[m [mimpl TaskDeduplicationCache {[m
+ [m
+     /// Store completed result[m
+     pub async fn store_completed(&self, idempotency_key: &str, result: ExecutionResult) {[m
+[31m-        let mut cache = self.cache.lock().await;[m
+[31m-        cache.insert([m
+[31m-            idempotency_key.to_string(),[m
+[31m-            TaskExecutionState::Completed {[m
+[31m-                result,[m
+[31m-                completed_at: Instant::now(),[m
+[31m-            },[m
+[31m-        );[m
+[32m+[m[32m        {[m
+[32m+[m[32m            let mut cache = self.cache.lock().await;[m
+[32m+[m[32m            cache.insert([m
+[32m+[m[32m                idempotency_key.to_string(),[m
+[32m+[m[32m                TaskExecutionState::Completed {[m
+[32m+[m[32m                    result,[m
+[32m+[m[32m                    completed_at: Instant::now(),[m
+[32m+[m[32m                },[m
+[32m+[m[32m            );[m
+[32m+[m[32m        }[m
+[32m+[m[32m        // Wakes any concurrent duplicate waiting on this key. No receivers is fine.[m
+[32m+[m[32m        let _ = self.completions.send(idempotency_key.to_string());[m
+     }[m
+ [m
+     /// Store failure[m
+     pub async fn store_failed(&self, idempotency_key: &str, error: String) {[m
+[31m-        let mut cache = self.cache.lock().await;[m
+[31m-        cache.insert([m
+[31m-            idempotency_key.to_string(),[m
+[31m-            TaskExecutionState::Failed {[m
+[31m-                error,[m
+[31m-                failed_at: Instant::now(),[m
+[31m-            },[m
+[31m-        );[m
+[32m+[m[32m        {[m
+[32m+[m[32m            let mut cache = self.cache.lock().await;[m
+[32m+[m[32m            cache.insert([m
+[32m+[m[32m                idempotency_key.to_string(),[m
+[32m+[m[32m                TaskExecutionState::Failed {[m
+[32m+[m[32m                    error,[m
+[32m+[m[32m                    failed_at: Instant::now(),[m
+[32m+[m[32m                },[m
+[32m+[m[32m            );[m
+[32m+[m[32m        }[m
+[32m+[m[32m        let _ = self.completions.send(idempotency_key.to_string());[m
+     }[m
+ [m
+     fn purge_expired_locked(&self, cache: &mut HashMap<String, TaskExecutionState>) {[m
+[1mdiff --git a/ocn-compute/src/server.rs b/ocn-compute/src/server.rs[m
+[1mindex 9cabc29..b550c5d 100644[m
+[1m--- a/ocn-compute/src/server.rs[m
+[1m+++ b/ocn-compute/src/server.rs[m
+[36m@@ -5,13 +5,16 @@[m
+ //! result; no results are fabricated, every successful result is produced by the real[m
+ //! executor and re-hashed independently by the client.[m
+ [m
+[31m-use std::sync::atomic::{AtomicU64, Ordering};[m
+[32m+[m[32muse std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};[m
+[32m+[m[32muse std::sync::Arc;[m
+ use std::time::{Duration, SystemTime, UNIX_EPOCH};[m
+ [m
+[32m+[m[32muse tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};[m
+[32m+[m
+ use ocn_core::task_wire::error_code;[m
+ use ocn_core::{QuicConnection, TaskRequestFrame, TaskResultFrame, TaskStream, TaskWireError};[m
+ [m
+[31m-use crate::deduplication::{CacheCheckResult, TaskDeduplicationCache};[m
+[32m+[m[32muse crate::deduplication::{CacheCheckResult, TaskDeduplicationCache, TaskExecutionState};[m
+ use crate::runtime::{ComputeExecutor, RuntimeError};[m
+ use crate::task::{[m
+     ExecutionResult, ResourceRequirements, TaskDescriptor, TaskStatus, TaskType,[m
+[36m@@ -25,17 +28,28 @@[m [mpub struct TaskServer {[m
+     idle_timeout: Duration,[m
+     request_timeout: Duration,[m
+     execution_count: AtomicU64,[m
+[32m+[m[32m    /// Bounds how many task streams may be admitted at once, across all connections[m
+[32m+[m[32m    /// served by this [`TaskServer`].[m
+[32m+[m[32m    inflight: Arc<Semaphore>,[m
+[32m+[m[32m    max_inflight: usize,[m
+[32m+[m[32m    inflight_now: Arc<AtomicUsize>,[m
+[32m+[m[32m    peak_inflight: AtomicUsize,[m
+ }[m
+ [m
+ impl TaskServer {[m
+     /// Create a server that identifies itself as `node_id` in every result frame.[m
+     pub fn new(node_id: impl Into<String>) -> Self {[m
+[32m+[m[32m        let max_inflight = default_max_inflight();[m
+         Self {[m
+             node_id: node_id.into(),[m
+             cache: TaskDeduplicationCache::new(Duration::from_secs(300), 1024),[m
+             idle_timeout: Duration::from_secs(1),[m
+             request_timeout: Duration::from_secs(15),[m
+             execution_count: AtomicU64::new(0),[m
+[32m+[m[32m            inflight: Arc::new(Semaphore::new(max_inflight)),[m
+[32m+[m[32m            max_inflight,[m
+[32m+[m[32m            inflight_now: Arc::new(AtomicUsize::new(0)),[m
+[32m+[m[32m            peak_inflight: AtomicUsize::new(0),[m
+         }[m
+     }[m
+ [m
+[36m@@ -46,6 +60,27 @@[m [mimpl TaskServer {[m
+         self[m
+     }[m
+ [m
+[32m+[m[32m    /// Bound how many task streams are admitted concurrently.[m
+[32m+[m[32m    ///[m
+[32m+[m[32m    /// At capacity the accept loop stops reading new streams, which applies QUIC[m
+[32m+[m[32m    /// backpressure instead of buffering unbounded work. Values below 1 are clamped to 1.[m
+[32m+[m[32m    pub fn with_max_inflight(mut self, permits: usize) -> Self {[m
+[32m+[m[32m        let permits = permits.max(1);[m
+[32m+[m[32m        self.inflight = Arc::new(Semaphore::new(permits));[m
+[32m+[m[32m        self.max_inflight = permits;[m
+[32m+[m[32m        self[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    /// Configured concurrent-admission limit.[m
+[32m+[m[32m    pub fn max_inflight(&self) -> usize {[m
+[32m+[m[32m        self.max_inflight[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    /// Highest number of task streams admitted at the same time since startup.[m
+[32m+[m[32m    pub fn peak_inflight(&self) -> usize {[m
+[32m+[m[32m        self.peak_inflight.load(Ordering::SeqCst)[m
+[32m+[m[32m    }[m
+[32m+[m
+     /// Number of tasks actually executed (deduplicated replays are not counted).[m
+     pub fn execution_count(&self) -> u64 {[m
+         self.execution_count.load(Ordering::SeqCst)[m
+[36m@@ -53,20 +88,34 @@[m [mimpl TaskServer {[m
+ [m
+     /// Serve task streams on one authenticated connection until it closes.[m
+     ///[m
+[31m-    /// Streams are processed one at a time per connection; separate connections are[m
+[31m-    /// served concurrently by their own tasks. Every task still gets its own QUIC[m
+[31m-    /// bidirectional stream.[m
+[31m-    pub async fn serve_connection(&self, connection: &QuicConnection) {[m
+[32m+[m[32m    /// Each accepted stream is handled in its own task, so a slow or stalled stream can[m
+[32m+[m[32m    /// never delay a sibling stream on the same connection. Admission is bounded by[m
+[32m+[m[32m    /// [`Self::with_max_inflight`]; while at capacity the loop stops accepting, which is[m
+[32m+[m[32m    /// the intended backpressure. Separate connections are served by their own loops.[m
+[32m+[m[32m    pub async fn serve_connection(self: &Arc<Self>, connection: &QuicConnection) {[m
+         loop {[m
+             match connection.accept_task(self.idle_timeout).await {[m
+[31m-                Ok(Some(mut stream)) => self.handle_stream(&mut stream).await,[m
+[32m+[m[32m                Ok(Some(stream)) => {[m
+[32m+[m[32m                    let permit = match self.inflight.clone().acquire_owned().await {[m
+[32m+[m[32m                        Ok(permit) => permit,[m
+[32m+[m[32m                        Err(_) => break,[m
+[32m+[m[32m                    };[m
+[32m+[m[32m                    let guard = InflightGuard::new(permit, self.inflight_now.clone());[m
+[32m+[m[32m                    let now = guard.observed();[m
+[32m+[m[32m                    self.peak_inflight.fetch_max(now, Ordering::SeqCst);[m
+[32m+[m
+[32m+[m[32m                    let server = Arc::clone(self);[m
+[32m+[m[32m                    tokio::spawn(async move {[m
+[32m+[m[32m                        server.handle_stream(stream, guard).await;[m
+[32m+[m[32m                    });[m
+[32m+[m[32m                }[m
+                 Ok(None) => continue,[m
+                 Err(_) => break,[m
+             }[m
+         }[m
+     }[m
+ [m
+[31m-    async fn handle_stream(&self, stream: &mut TaskStream) {[m
+[32m+[m[32m    async fn handle_stream(&self, mut stream: TaskStream, permit: InflightGuard) {[m
+         let request = match stream.recv_request(self.request_timeout).await {[m
+             Ok(request) => request,[m
+             Err(error) => {[m
+[36m@@ -87,7 +136,7 @@[m [mimpl TaskServer {[m
+         };[m
+ [m
+         let result = match request.validate() {[m
+[31m-            Ok(()) => self.execute_request(&request).await,[m
+[32m+[m[32m            Ok(()) => self.execute_request(&request, permit).await,[m
+             Err(error) => TaskResultFrame::failure([m
+                 request.task_id.clone(),[m
+                 &self.node_id,[m
+[36m@@ -99,7 +148,11 @@[m [mimpl TaskServer {[m
+         let _ = stream.send_result(&result).await;[m
+     }[m
+ [m
+[31m-    async fn execute_request(&self, request: &TaskRequestFrame) -> TaskResultFrame {[m
+[32m+[m[32m    async fn execute_request([m
+[32m+[m[32m        &self,[m
+[32m+[m[32m        request: &TaskRequestFrame,[m
+[32m+[m[32m        permit: InflightGuard,[m
+[32m+[m[32m    ) -> TaskResultFrame {[m
+         let descriptor = match descriptor_from_request(request) {[m
+             Ok(descriptor) => descriptor,[m
+             Err(error) => {[m
+[36m@@ -112,17 +165,18 @@[m [mimpl TaskServer {[m
+             }[m
+         };[m
+ [m
+[32m+[m[32m        // Subscribe before checking, so a completion that races with this call is still[m
+[32m+[m[32m        // observed. Only concurrent duplicates actually wait on this receiver.[m
+[32m+[m[32m        let completions = self.cache.subscribe_completions();[m
+[32m+[m
+         match self.cache.check_or_register(&descriptor).await {[m
+[31m-            Ok(CacheCheckResult::NewTask) => self.execute_new(descriptor).await,[m
+[32m+[m[32m            Ok(CacheCheckResult::NewTask) => self.execute_new(descriptor, permit).await,[m
+             Ok(CacheCheckResult::Completed(result)) => {[m
+                 result_to_frame(result, &self.node_id, true)[m
+             }[m
+[31m-            Ok(CacheCheckResult::AlreadyRunning) => TaskResultFrame::failure([m
+[31m-                request.task_id.clone(),[m
+[31m-                &self.node_id,[m
+[31m-                error_code::ALREADY_RUNNING,[m
+[31m-                "an identical task is already running",[m
+[31m-            ),[m
+[32m+[m[32m            Ok(CacheCheckResult::AlreadyRunning) => {[m
+[32m+[m[32m                self.await_duplicate(&descriptor, completions, permit).await[m
+[32m+[m[32m            }[m
+             Ok(CacheCheckResult::Failed(error)) => TaskResultFrame::failure([m
+                 request.task_id.clone(),[m
+                 &self.node_id,[m
+[36m@@ -138,15 +192,90 @@[m [mimpl TaskServer {[m
+         }[m
+     }[m
+ [m
+[31m-    async fn execute_new(&self, descriptor: TaskDescriptor) -> TaskResultFrame {[m
+[32m+[m[32m    /// Single-flight: wait for the in-flight original, then serve its stored result.[m
+[32m+[m[32m    ///[m
+[32m+[m[32m    /// The waiter's own `timeout_ms` is the wait budget. The permit is held while waiting[m
+[32m+[m[32m    /// so a flood of duplicate requests cannot bypass the admission limit.[m
+[32m+[m[32m    async fn await_duplicate([m
+[32m+[m[32m        &self,[m
+[32m+[m[32m        descriptor: &TaskDescriptor,[m
+[32m+[m[32m        mut completions: broadcast::Receiver<String>,[m
+[32m+[m[32m        _permit: InflightGuard,[m
+[32m+[m[32m    ) -> TaskResultFrame {[m
+[32m+[m[32m        let key = descriptor.idempotency_key.clone();[m
+[32m+[m[32m        let budget = Duration::from_millis(descriptor.timeout_ms);[m
+[32m+[m
+[32m+[m[32m        let wait = tokio::time::timeout(budget, async {[m
+[32m+[m[32m            loop {[m
+[32m+[m[32m                match completions.recv().await {[m
+[32m+[m[32m                    Ok(completed_key) if completed_key == key => return,[m
+[32m+[m[32m                    // A different task finished; keep waiting for ours.[m
+[32m+[m[32m                    Ok(_) => continue,[m
+[32m+[m[32m                    // Buffered completions were dropped; re-read the cache instead.[m
+[32m+[m[32m                    Err(broadcast::error::RecvError::Lagged(_)) => return,[m
+[32m+[m[32m                    Err(broadcast::error::RecvError::Closed) => return,[m
+[32m+[m[32m                }[m
+[32m+[m[32m            }[m
+[32m+[m[32m        })[m
+[32m+[m[32m        .await;[m
+[32m+[m[32m        let wait_expired = wait.is_err();[m
+[32m+[m
+[32m+[m[32m        match self.cache.lookup(&key).await {[m
+[32m+[m[32m            Some(TaskExecutionState::Completed { result, .. }) => {[m
+[32m+[m[32m                result_to_frame(result, &self.node_id, true)[m
+[32m+[m[32m            }[m
+[32m+[m[32m            Some(TaskExecutionState::Failed { error, .. }) => TaskResultFrame::failure([m
+[32m+[m[32m                descriptor.task_id.clone(),[m
+[32m+[m[32m                &self.node_id,[m
+[32m+[m[32m                error_code::INVALID_TASK,[m
+[32m+[m[32m                error,[m
+[32m+[m[32m            ),[m
+[32m+[m[32m            Some(TaskExecutionState::Running { .. }) => {[m
+[32m+[m[32m                if wait_expired {[m
+[32m+[m[32m                    TaskResultFrame::failure([m
+[32m+[m[32m                        descriptor.task_id.clone(),[m
+[32m+[m[32m                        &self.node_id,[m
+[32m+[m[32m                        error_code::TIMEOUT,[m
+[32m+[m[32m                        "an identical task is still running and did not finish within the request timeout",[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                } else {[m
+[32m+[m[32m                    TaskResultFrame::failure([m
+[32m+[m[32m                        descriptor.task_id.clone(),[m
+[32m+[m[32m                        &self.node_id,[m
+[32m+[m[32m                        error_code::ALREADY_RUNNING,[m
+[32m+[m[32m                        "an identical task is already running",[m
+[32m+[m[32m                    )[m
+[32m+[m[32m                }[m
+[32m+[m[32m            }[m
+[32m+[m[32m            None => TaskResultFrame::failure([m
+[32m+[m[32m                descriptor.task_id.clone(),[m
+[32m+[m[32m                &self.node_id,[m
+[32m+[m[32m                error_code::INVALID_TASK,[m
+[32m+[m[32m                "the identical task is no longer tracked by the deduplication cache",[m
+[32m+[m[32m            ),[m
+[32m+[m[32m        }[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    async fn execute_new([m
+[32m+[m[32m        &self,[m
+[32m+[m[32m        descriptor: TaskDescriptor,[m
+[32m+[m[32m        permit: InflightGuard,[m
+[32m+[m[32m    ) -> TaskResultFrame {[m
+         let idempotency_key = descriptor.idempotency_key.clone();[m
+         let task_id = descriptor.task_id.clone();[m
+         let timeout = Duration::from_millis(descriptor.timeout_ms);[m
+ [m
+[31m-        let execution = tokio::task::spawn_blocking(move || ComputeExecutor::execute(&descriptor));[m
+[32m+[m[32m        let mut execution = tokio::task::spawn_blocking(move || ComputeExecutor::execute(&descriptor));[m
+ [m
+[31m-        match tokio::time::timeout(timeout, execution).await {[m
+[32m+[m[32m        match tokio::time::timeout(timeout, &mut execution).await {[m
+             Err(_) => {[m
+[32m+[m[32m                // The blocking closure cannot be cancelled. Keep the admission permit[m
+[32m+[m[32m                // accounted for in a reaper until the real work actually ends, so a[m
+[32m+[m[32m                // timed-out task cannot free capacity it is still consuming.[m
+[32m+[m[32m                tokio::spawn(async move {[m
+[32m+[m[32m                    let _permit = permit;[m
+[32m+[m[32m                    let _ = execution.await;[m
+[32m+[m[32m                });[m
+                 self.cache[m
+                     .store_failed(&idempotency_key, "task execution timed out".to_string())[m
+                     .await;[m
+[36m@@ -183,6 +312,44 @@[m [mimpl TaskServer {[m
+     }[m
+ }[m
+ [m
+[32m+[m[32m/// Admitted-stream permit that keeps the in-flight gauge accurate.[m
+[32m+[m[32m///[m
+[32m+[m[32m/// Moving this into the timeout reaper is what keeps a detached `spawn_blocking`[m
+[32m+[m[32m/// execution accounted for after its request future has returned.[m
+[32m+[m[32mstruct InflightGuard {[m
+[32m+[m[32m    _permit: OwnedSemaphorePermit,[m
+[32m+[m[32m    current: Arc<AtomicUsize>,[m
+[32m+[m[32m    observed: usize,[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mimpl InflightGuard {[m
+[32m+[m[32m    fn new(permit: OwnedSemaphorePermit, current: Arc<AtomicUsize>) -> Self {[m
+[32m+[m[32m        let observed = current.fetch_add(1, Ordering::SeqCst) + 1;[m
+[32m+[m[32m        Self {[m
+[32m+[m[32m            _permit: permit,[m
+[32m+[m[32m            current,[m
+[32m+[m[32m            observed,[m
+[32m+[m[32m        }[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    fn observed(&self) -> usize {[m
+[32m+[m[32m        self.observed[m
+[32m+[m[32m    }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mimpl Drop for InflightGuard {[m
+[32m+[m[32m    fn drop(&mut self) {[m
+[32m+[m[32m        self.current.fetch_sub(1, Ordering::SeqCst);[m
+[32m+[m[32m    }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfn default_max_inflight() -> usize {[m
+[32m+[m[32m    std::thread::available_parallelism()[m
+[32m+[m[32m        .map(|threads| threads.get())[m
+[32m+[m[32m        .unwrap_or(4)[m
+[32m+[m[32m        .max(1)[m
+[32m+[m[32m}[m
+[32m+[m
+ /// Client helper that issues a task over an authenticated QUIC connection and verifies[m
+ /// the returned result hash independently before handing it to the caller.[m
+ pub struct TaskClient<'a> {[m

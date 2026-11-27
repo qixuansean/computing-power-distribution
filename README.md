@@ -109,6 +109,12 @@ Remove the rule after testing if the port is not needed permanently.
 | `invalid` | Wrong input hash; server must reject with `INVALID_TASK` |
 | `timeout` | Incomplete frame plus bounded read; follow-up task proves recovery |
 
+> Note: each task stream now runs in its own server task, bounded by an in-flight admission
+> limit (default: available CPUs). Before the 2026-11-27 fix the accept loop awaited each
+> stream, so the 8 `concurrent` tasks queued and a stalled stream could delay its siblings
+> by up to the 15 s request timeout. Measurements and remaining limits are in §7 of
+> [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
 The client records:
 
 - `connect_ms` — time from `connect()` start to completed B-2 authentication

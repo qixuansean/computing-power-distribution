@@ -1,7 +1,7 @@
 use crate::task::{TaskDescriptor, ExecutionResult, TaskStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
@@ -13,17 +13,39 @@ pub enum TaskExecutionState {
 
 pub struct TaskDeduplicationCache {
     cache: Arc<Mutex<HashMap<String, TaskExecutionState>>>,
+    completions: broadcast::Sender<String>,
     ttl: Duration,
     max_capacity: usize,
 }
 
 impl TaskDeduplicationCache {
     pub fn new(ttl: Duration, max_capacity: usize) -> Self {
+        // Buffer only needs to hold a burst of completions; a lagging waiter treats
+        // `Lagged` as "re-read the cache", so no completion is ever lost logically.
+        let (completions, _) = broadcast::channel(64);
         Self {
             cache: Arc::new(Mutex::new(HashMap::new())),
+            completions,
             ttl,
             max_capacity,
         }
+    }
+
+    /// Subscribe to completion notifications before checking the cache.
+    ///
+    /// Callers must subscribe *before* [`Self::check_or_register`]. A completion that
+    /// happens after the subscription is always delivered, and a completion that happens
+    /// before it is observed as a terminal state by `check_or_register`, so a concurrent
+    /// duplicate can never miss the result of the task it is waiting for.
+    pub fn subscribe_completions(&self) -> broadcast::Receiver<String> {
+        self.completions.subscribe()
+    }
+
+    /// Read the current state of a task without registering anything.
+    pub async fn lookup(&self, idempotency_key: &str) -> Option<TaskExecutionState> {
+        let mut cache = self.cache.lock().await;
+        self.purge_expired_locked(&mut cache);
+        cache.get(idempotency_key).cloned()
     }
 
     /// Try to register a task as running. 
@@ -70,26 +92,33 @@ impl TaskDeduplicationCache {
 
     /// Store completed result
     pub async fn store_completed(&self, idempotency_key: &str, result: ExecutionResult) {
-        let mut cache = self.cache.lock().await;
-        cache.insert(
-            idempotency_key.to_string(),
-            TaskExecutionState::Completed {
-                result,
-                completed_at: Instant::now(),
-            },
-        );
+        {
+            let mut cache = self.cache.lock().await;
+            cache.insert(
+                idempotency_key.to_string(),
+                TaskExecutionState::Completed {
+                    result,
+                    completed_at: Instant::now(),
+                },
+            );
+        }
+        // Wakes any concurrent duplicate waiting on this key. No receivers is fine.
+        let _ = self.completions.send(idempotency_key.to_string());
     }
 
     /// Store failure
     pub async fn store_failed(&self, idempotency_key: &str, error: String) {
-        let mut cache = self.cache.lock().await;
-        cache.insert(
-            idempotency_key.to_string(),
-            TaskExecutionState::Failed {
-                error,
-                failed_at: Instant::now(),
-            },
-        );
+        {
+            let mut cache = self.cache.lock().await;
+            cache.insert(
+                idempotency_key.to_string(),
+                TaskExecutionState::Failed {
+                    error,
+                    failed_at: Instant::now(),
+                },
+            );
+        }
+        let _ = self.completions.send(idempotency_key.to_string());
     }
 
     fn purge_expired_locked(&self, cache: &mut HashMap<String, TaskExecutionState>) {
