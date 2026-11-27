@@ -1,0 +1,46 @@
+{
+  "label": "single-device-lan-interface",
+  "host": "DESKTOP",
+  "server": "192.168.68.114:47802",
+  "server_node_id": "compute-b-lan",
+  "client_node_id": "compute-a-lan",
+  "connect_ms": 6.0623,
+  "run_id": "1795765024265",
+  "started_unix_ms": 1795765024267,
+  "total_tasks": 1,
+  "passed_tasks": 1,
+  "failed_tasks": 0,
+  "total_bytes": 55,
+  "total_wall_ms": 2.8366,
+  "overall_mib_s": 0.018491182190771963,
+  "scenarios": [
+    {
+      "name": "small",
+      "tasks": 1,
+      "passed": 1,
+      "failed": 0,
+      "bytes": 55,
+      "wall_ms": 2.8095,
+      "min_latency_ms": 2.7525000000000004,
+      "avg_latency_ms": 2.7525000000000004,
+      "max_latency_ms": 2.7525000000000004,
+      "throughput_mib_s": 0.01866954525799742
+    }
+  ],
+  "tasks": [
+    {
+      "scenario": "small",
+      "task_id": "1795765024265-small",
+      "bytes": 55,
+      "passed": true,
+      "server_success": true,
+      "duplicate": false,
+      "latency_ms": 2.7525000000000004,
+      "server_execution_ms": 1,
+      "throughput_mib_s": 0.01905616254399409,
+      "error_code": null,
+      "error": null
+    }
+  ],
+  "failures": []
+}

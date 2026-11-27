@@ -1,4 +1,4 @@
-use quinn::{Endpoint, Connection};
+use quinn::{Endpoint, Connection, RecvStream, SendStream};
 use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use crate::proto::{FixedHeader, CONTROL_MAX_PAYLOAD_SIZE, read_fixed_frame, gene
 use crate::transport::{Transport, ConnectionHandle};
 use crate::auth::{extract_tls_exporter_binding, derive_session_auth_key, compute_auth_proof, PendingChallengeStore};
 use crate::messages::ConnectionState;
+use crate::task_wire::{read_task_frame, write_task_frame, TaskRequestFrame, TaskResultFrame};
 
 pub struct QuicTransport {
     identity: NodeIdentity,
@@ -89,6 +90,88 @@ impl ConnectionHandle for QuicConnection {
 
     fn remote_addr(&self) -> SocketAddr {
         self.connection.remote_address()
+    }
+
+    fn as_quic(&self) -> Option<&QuicConnection> {
+        Some(self)
+    }
+}
+
+/// Client side of a single task exchange.
+///
+/// The request was written on the send half of a fresh bidirectional stream, which has
+/// already been finished. The response is read from the receive half of that same
+/// stream, so results can never be confused between concurrent tasks.
+pub struct TaskExchange {
+    recv: RecvStream,
+}
+
+impl TaskExchange {
+    /// Read and validate the server's result, bounded by `timeout`.
+    pub async fn recv_result_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> anyhow::Result<TaskResultFrame> {
+        let result: TaskResultFrame = read_task_frame(&mut self.recv, timeout).await?;
+        result.validate()?;
+        Ok(result)
+    }
+}
+
+/// Server side of a single task exchange, obtained from [`QuicConnection::accept_task`].
+pub struct TaskStream {
+    send: SendStream,
+    recv: RecvStream,
+}
+
+impl TaskStream {
+    /// Decode the task request written by the client.
+    ///
+    /// The wire fields are intentionally not validated here so the server can echo the
+    /// decoded task id in a structured error result before rejecting the request.
+    pub async fn recv_request(
+        &mut self,
+        timeout: Duration,
+    ) -> anyhow::Result<TaskRequestFrame> {
+        read_task_frame(&mut self.recv, timeout).await
+    }
+
+    /// Write the result back on this stream and finish the send half.
+    pub async fn send_result(&mut self, result: &TaskResultFrame) -> anyhow::Result<()> {
+        write_task_frame(&mut self.send, result).await?;
+        self.send.finish()?;
+        Ok(())
+    }
+
+    /// Abort this stream without consuming further input.
+    pub fn reset(&mut self, code: u32) {
+        let _ = self.send.reset(code.into());
+        let _ = self.recv.stop(code.into());
+    }
+}
+
+impl QuicConnection {
+    /// Client: open one bidirectional stream, write `request`, and return the exchange.
+    ///
+    /// Uses a fresh stream per task, as required for independent concurrent tasks.
+    pub async fn open_task(&self, request: &TaskRequestFrame) -> anyhow::Result<TaskExchange> {
+        request.validate()?;
+        let (mut send, recv) = self.connection.open_bi().await?;
+        write_task_frame(&mut send, request).await?;
+        send.finish()?;
+        Ok(TaskExchange { recv })
+    }
+
+    /// Server: accept the next task stream opened by the authenticated peer.
+    ///
+    /// Returns `Ok(None)` when `idle_timeout` elapses without a new stream, which lets
+    /// callers poll shutdown conditions without treating idleness as an error.
+    pub async fn accept_task(&self, idle_timeout: Duration) -> anyhow::Result<Option<TaskStream>> {
+        match tokio::time::timeout(idle_timeout, self.connection.accept_bi()).await {
+            Ok(Ok((send, recv))) => Ok(Some(TaskStream { send, recv })),
+            Ok(Err(e)) => Err(e.into()),
+            Err(_) => Ok(None),
+        }
     }
 }
 

@@ -13,4 +13,12 @@ pub trait ConnectionHandle: Send + Sync {
     async fn send(&mut self, packet: &OCNPacket) -> anyhow::Result<()>;
     async fn recv(&mut self) -> anyhow::Result<Option<OCNPacket>>;
     fn remote_addr(&self) -> std::net::SocketAddr;
+
+    /// Access the concrete QUIC connection when this handle wraps one.
+    ///
+    /// Used by task transports to open/accept independent bidirectional streams
+    /// without changing the authenticated control-packet path.
+    fn as_quic(&self) -> Option<&crate::quic::QuicConnection> {
+        None
+    }
 }

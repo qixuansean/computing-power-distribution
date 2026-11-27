@@ -4,6 +4,7 @@ pub mod runtime;
 pub mod engine;
 pub mod dispatcher;
 pub mod deduplication;
+pub mod server;
 
 pub use task::*;
 pub use resource_manager::*;
@@ -11,3 +12,4 @@ pub use runtime::*;
 pub use engine::*;
 pub use dispatcher::*;
 pub use deduplication::*;
+pub use server::*;

@@ -10,3 +10,4 @@ thiserror = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 sha2 = "0.10"
 anyhow = "1.0"
+ocn-core = { path = "../ocn-core" }
