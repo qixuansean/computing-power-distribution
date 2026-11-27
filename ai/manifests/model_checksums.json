@@ -1,0 +1,7 @@
+{
+  "granite-timeseries-ttm-r2": {
+    "filename": "model.safetensors",
+    "size_bytes": 3240592,
+    "sha256": "a706726a7eb01bbcb42994b7dcb3c06ea9557898dbae8d480eb04fe8ccb89710"
+  }
+}

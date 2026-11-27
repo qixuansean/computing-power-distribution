@@ -1,0 +1,9 @@
+{
+  "model_name": "granite-timeseries-ttm-r2",
+  "hf_repo": "ibm-granite/granite-timeseries-ttm-r2",
+  "context_length": 512,
+  "forecast_length": 96,
+  "num_parameters": 805000,
+  "sha256": "a706726a7eb01bbcb42994b7dcb3c06ea9557898dbae8d480eb04fe8ccb89710",
+  "license": "apache-2.0"
+}

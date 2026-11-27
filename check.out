@@ -1,0 +1,62 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling winapi v0.3.9
+   Compiling generic-array v0.14.7
+   Compiling parking_lot_core v0.9.12
+    Checking futures-channel v0.3.34
+   Compiling num-traits v0.2.19
+   Compiling maybe-uninit v2.0.0
+   Compiling zmij v1.0.23
+    Checking slab v0.4.12
+    Checking futures-task v0.3.34
+    Checking regex-automata v0.4.19
+error: failed to run custom build command for `proc-macro2 v1.0.107`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\proc-macro2/a861432dd3f64e8c\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)
+warning: build failed, waiting for other jobs to finish...
+error: failed to run custom build command for `quote v1.0.47`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\quote/5ddf43a8bf73807f\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)
+error: failed to run custom build command for `winapi v0.3.9`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\winapi/2d80ce11632556ef\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)
+error: failed to run custom build command for `generic-array v0.14.7`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\generic-array/e79afe18427d4c8b\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)
+error: failed to run custom build command for `parking_lot_core v0.9.12`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\parking_lot_core/baf98a7e4f2bb5b3\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)
+error: failed to run custom build command for `num-traits v0.2.19`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\num-traits/94b12a681fe89879\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)
+error: failed to run custom build command for `maybe-uninit v2.0.0`
+
+Caused by:
+  could not execute process `C:\Users\qixua\Desktop\OCN\target\debug\build\maybe-uninit/826dd1d842947ead\out\build_script_build` (never executed)
+
+Caused by:
+  An Application Control policy has blocked this file. (os error 4551)

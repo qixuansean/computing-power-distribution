@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "ocn-core",
+    "ocn-node",
+    "ocn-mind",
+    "ocn-compute",
+]
+resolver = "2"

@@ -1,0 +1,15 @@
+/target/
+/Cargo.lock
+**/*.rs.bk
+**/.DS_Store
+Thumbs.db
+.vs/
+.vscode/
+*.pem
+*.key
+*.token
+*.secret
+*.env
+*.log
+temp/
+tmp/
